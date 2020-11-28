@@ -9,7 +9,6 @@ use slog::{debug, error, info, o, trace, warn};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-const RPC_LATENCY_METRIC: &str = "rpc_latency";
 const RPCS_IN_FLIGHT_METRIC: &str = "rpcs_in_flight";
 
 pub struct NatsRpcServer {
@@ -139,20 +138,6 @@ impl NatsRpcServer {
     }
 
     async fn register_metrics(&self) {
-        self.reporter
-            .write()
-            .await
-            .register_histogram(metrics::Opts {
-                kind: metrics::MetricKind::Histogram,
-                namespace: String::from("pitaya"),
-                subsystem: String::from("rpc"),
-                name: String::from(RPC_LATENCY_METRIC),
-                help: String::from("histogram of rpc latency in seconds"),
-                variable_labels: vec!["route".to_string(), "status".to_string()],
-                buckets: Some(metrics::exponential_buckets(0.0005, 2.0, 20)),
-            })
-            .expect("should not fail to register");
-
         self.reporter
             .write()
             .await
