@@ -8,3 +8,6 @@ main
 .DS_Store
 .idea/
 main
+
+.fake
+.ionide
