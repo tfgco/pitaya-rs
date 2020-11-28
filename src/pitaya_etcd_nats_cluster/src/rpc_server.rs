@@ -5,9 +5,8 @@ use pitaya_core::{
     metrics::{self},
     protos, utils,
 };
-use prost::Message;
 use slog::{debug, error, info, o, trace, warn};
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
 const RPC_LATENCY_METRIC: &str = "rpc_latency";
@@ -46,20 +45,12 @@ impl NatsRpcServer {
         sender: &mpsc::Sender<Rpc>,
         runtime_handle: tokio::runtime::Handle,
         conn: Arc<RwLock<Option<(nats::Connection, nats::subscription::Handler)>>>,
-        reporter: &metrics::ThreadSafeReporter,
     ) -> std::io::Result<()> {
         debug!(logger, "received nats message"; "message" => %message);
 
-        let rpc_start = Instant::now();
         let mut sender = sender.clone();
-        let req: protos::Request = Message::decode(message.data.as_ref())?;
-        let (responder, response_receiver) = oneshot::channel();
 
-        let route = if let Some(msg) = req.msg.as_ref() {
-            msg.route.to_string()
-        } else {
-            String::new()
-        };
+        let (responder, response_receiver) = oneshot::channel();
 
         let response_topic = match message.reply.take() {
             Some(topic) => topic,
@@ -69,7 +60,7 @@ impl NatsRpcServer {
             }
         };
 
-        match sender.try_send(Rpc::new(req, responder)) {
+        match sender.try_send(Rpc::new(message.data, responder)) {
             Ok(_) => {
                 // For the moment we are ignoring the handle returned by the task.
                 // Worst case scenario we will have to kill the task in the middle of its processing
@@ -79,10 +70,7 @@ impl NatsRpcServer {
                     let logger = logger.clone();
                     // runtime.spawn(async move {
                     trace!(logger, "spawning response receiver task");
-                    let reporter = reporter.clone();
                     runtime_handle.spawn(async move {
-                        Self::record_rpc_start(logger.clone(), reporter.clone()).await;
-
                         match response_receiver.await {
                             Ok(response) => {
                                 let conn = match conn.read().await.as_ref() {
@@ -97,9 +85,6 @@ impl NatsRpcServer {
                                 if let Err(err) = Self::respond(&conn, &response_topic, response)
                                 {
                                     error!(logger, "failed to respond rpc"; "error" => %err);
-                                    Self::record_rpc_end(logger.clone(), reporter.clone(), &route, rpc_start, false).await;
-                                } else {
-                                    Self::record_rpc_end(logger.clone(), reporter.clone(), &route, rpc_start, true).await;
                                 }
                             }
                             Err(e) => {
@@ -113,7 +98,6 @@ impl NatsRpcServer {
             Err(mpsc::error::TrySendError::Full(_)) => {
                 let _ = {
                     let logger = logger.clone();
-                    let reporter = reporter.clone();
                     runtime_handle.spawn(async move {
                         warn!(logger, "channel is full, dropping request");
                         let conn = match conn.read().await.as_ref() {
@@ -124,25 +108,17 @@ impl NatsRpcServer {
                             }
                         };
 
-                        let response = protos::Response {
+                        let response = utils::encode_proto(&protos::Response {
                             error: Some(protos::Error {
                                 code: "PIT-503".to_string(),
                                 msg: "server is overloaded".to_string(),
                                 ..Default::default()
                             }),
                             ..Default::default()
-                        };
+                        });
                         if let Err(err) = Self::respond(&conn, &response_topic, response) {
                             error!(logger, "failed to respond rpc"; "error" => %err);
                         }
-                        Self::record_rpc_end(
-                            logger.clone(),
-                            reporter.clone(),
-                            &route,
-                            rpc_start,
-                            false,
-                        )
-                        .await;
                     })
                 };
             }
@@ -154,46 +130,12 @@ impl NatsRpcServer {
         Ok(())
     }
 
-    async fn record_rpc_start(logger: slog::Logger, reporter: metrics::ThreadSafeReporter) {
-        metrics::add_to_gauge(
-            logger.clone(),
-            reporter.clone(),
-            RPCS_IN_FLIGHT_METRIC,
-            1.0,
-            &[],
-        )
-        .await;
-    }
-
-    async fn record_rpc_end(
-        logger: slog::Logger,
-        reporter: metrics::ThreadSafeReporter,
-        route: &str,
-        rpc_start: Instant,
-        success: bool,
-    ) {
-        // TODO(lhahn): we're unnecessarily locking the same mutex on the reporter two times.
-        // We should consider changing this if it becomes a problem in the future.
-
-        metrics::record_histogram_duration(
-            logger.clone(),
-            reporter.clone(),
-            RPC_LATENCY_METRIC,
-            rpc_start,
-            &[route, if success { "ok" } else { "failed" }],
-        )
-        .await;
-
-        metrics::add_to_gauge(logger, reporter, RPCS_IN_FLIGHT_METRIC, -1.0, &[]).await;
-    }
-
     fn respond(
         connection: &nats::Connection,
         reply_topic: &str,
-        res: protos::Response,
+        res: Vec<u8>,
     ) -> Result<(), Error> {
-        let buffer = utils::encode_proto(&res);
-        connection.publish(reply_topic, buffer).map_err(Error::Nats)
+        connection.publish(reply_topic, res).map_err(Error::Nats)
     }
 
     async fn register_metrics(&self) {
@@ -258,7 +200,6 @@ impl RpcServer for NatsRpcServer {
             let sender = rpc_sender;
             let runtime_handle = self.runtime_handle.clone();
             let connection = self.connection.clone();
-            let reporter = self.reporter.clone();
             nats_connection
                 .subscribe(&topic)
                 .map_err(Error::Nats)?
@@ -269,7 +210,6 @@ impl RpcServer for NatsRpcServer {
                         &sender,
                         runtime_handle.clone(),
                         connection.clone(),
-                        &reporter,
                     )
                 })
         };
@@ -324,11 +264,11 @@ mod tests {
         let handle = {
             tokio::spawn(async move {
                 while let Some(rpc) = rpc_server_conn.recv().await {
-                    let res = protos::Response {
+                    let res = utils::encode_proto(&protos::Response {
                         data: b"HEY, THIS IS THE SERVER".to_vec(),
                         error: None,
-                    };
-                    if rpc.responder().send(res).is_err() {
+                    });
+                    if !rpc.respond(res) {
                         panic!("failed to respond rpc");
                     }
                 }

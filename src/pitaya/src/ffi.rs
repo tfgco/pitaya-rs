@@ -226,7 +226,7 @@ pub extern "C" fn pitaya_buffer_drop(buf: *mut PitayaBuffer) {
 
 pub struct PitayaRpc {
     request: Vec<u8>,
-    responder: oneshot::Sender<protos::Response>,
+    responder: oneshot::Sender<Vec<u8>>,
 }
 
 #[repr(C)]
@@ -234,17 +234,6 @@ pub struct PitayaRpc {
 pub enum PitayaClusterNotification {
     ServerAdded = 0,
     ServerRemoved = 1,
-}
-
-pub struct PitayaContext {
-    #[allow(dead_code)]
-    ctx: context::Context,
-}
-
-impl std::convert::From<context::Context> for PitayaContext {
-    fn from(ctx: context::Context) -> Self {
-        Self { ctx }
-    }
 }
 
 //=========================================================================
@@ -255,7 +244,7 @@ impl std::convert::From<context::Context> for PitayaContext {
 pub type PitayaClusterNotificationCallback =
     extern "C" fn(*mut c_void, PitayaClusterNotification, *mut PitayaServerInfo);
 
-pub type PitayaHandleRpcCallback = extern "C" fn(*mut c_void, *mut PitayaContext, *mut PitayaRpc);
+pub type PitayaHandleRpcCallback = extern "C" fn(*mut c_void, *mut PitayaRpc);
 
 #[derive(Debug, Clone, Copy)]
 struct PitayaUserData(*mut c_void);
@@ -334,20 +323,13 @@ pub extern "C" fn pitaya_rpc_respond(
     assert!(!response_data.is_null());
 
     let rpc = unsafe { Box::from_raw(rpc) };
-
     let response_slice = unsafe { slice::from_raw_parts(response_data, response_len as usize) };
 
-    let response = match Message::decode(response_slice) {
-        Ok(r) => r,
-        Err(e) => {
-            return Box::into_raw(Box::new(PitayaError::new(
-                "PIT-400",
-                &format!("invalid response bytes: {}", e),
-            )));
-        }
-    };
-
-    let sent = rpc.responder.send(response).map(|_| true).unwrap_or(false);
+    let sent = rpc
+        .responder
+        .send(Vec::from(response_slice))
+        .map(|_| true)
+        .unwrap_or(false);
 
     if sent {
         null_mut()
@@ -362,11 +344,6 @@ pub extern "C" fn pitaya_rpc_respond(
 #[no_mangle]
 pub extern "C" fn pitaya_rpc_drop(rpc: *mut PitayaRpc) {
     let _ = unsafe { Box::from_raw(rpc) };
-}
-
-#[no_mangle]
-pub extern "C" fn pitaya_ctx_drop(ctx: *mut PitayaContext) {
-    let _ = unsafe { Box::from_raw(ctx) };
 }
 
 // We are telling rust here that we know it is safe to send the
@@ -482,14 +459,13 @@ pub extern "C" fn pitaya_initialize_with_nats(
             .with_config_file(&config_file)
             .with_server_info(server_info.into())
             .with_logger(root_logger)
-            .with_rpc_handler(Box::new(move |ctx, _session, rpc| {
-                let request_buffer = utils::encode_proto(rpc.request());
+            .with_rpc_handler(Box::new(move |rpc| {
+                let (request_buffer, responder) = rpc.consume();
                 let rpc = Box::into_raw(Box::new(PitayaRpc {
                     request: request_buffer,
-                    responder: rpc.responder(),
+                    responder,
                 }));
-                let pitaya_ctx = Box::into_raw(Box::new(PitayaContext::from(ctx)));
-                handle_rpc_cb(user_ctx.0, pitaya_ctx, rpc);
+                handle_rpc_cb(user_ctx.0, rpc);
             }))
             .with_cluster_subscriber({
                 move |notification| match notification {

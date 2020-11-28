@@ -35,8 +35,6 @@ typedef struct Pitaya Pitaya;
 
 typedef struct PitayaBuffer PitayaBuffer;
 
-typedef struct PitayaContext PitayaContext;
-
 typedef struct PitayaError PitayaError;
 
 typedef struct PitayaMetricsReporter PitayaMetricsReporter;
@@ -45,7 +43,7 @@ typedef struct PitayaRpc PitayaRpc;
 
 typedef struct PitayaServerInfo PitayaServerInfo;
 
-typedef void (*PitayaHandleRpcCallback)(void*, PitayaContext*, PitayaRpc*);
+typedef void (*PitayaHandleRpcCallback)(void*, PitayaRpc*);
 
 typedef void (*PitayaClusterNotificationCallback)(void*, PitayaClusterNotification, PitayaServerInfo*);
 
@@ -81,8 +79,6 @@ const uint8_t *pitaya_buffer_data(PitayaBuffer *buf, int32_t *len);
 void pitaya_buffer_drop(PitayaBuffer *buf);
 
 PitayaBuffer *pitaya_buffer_new(const uint8_t *data, int32_t len);
-
-void pitaya_ctx_drop(PitayaContext *ctx);
 
 const char *pitaya_error_code(PitayaError *err);
 

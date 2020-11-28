@@ -10,7 +10,7 @@ pub use pitaya_core::{
 };
 use pitaya_core::{
     cluster::server::{ServerId, ServerInfo, ServerKind},
-    constants as core_constants, context,
+    context,
     service::{self, RpcHandler},
     Route,
 };
@@ -362,26 +362,12 @@ impl Pitaya {
             }
 
             let rpc = maybe_rpc.unwrap();
-            let logger = logger.clone();
             let container = container.clone();
             let remote = remote.clone();
 
             // Spawn task to handle the incoming RPC.
             let _ = tokio::spawn(async move {
-                match context::Context::new(rpc.request(), container) {
-                    Ok(ctx) => {
-                        remote.process_rpc(ctx, rpc).await;
-                    }
-                    Err(e) => {
-                        let response = utils::build_error_response(
-                            core_constants::CODE_BAD_FORMAT,
-                            format!("invalid request: {}", e),
-                        );
-                        if !rpc.respond(response) {
-                            error!(logger, "failed to respond to rpc");
-                        }
-                    }
-                }
+                remote.process_rpc(rpc, container).await;
             });
         }
     }

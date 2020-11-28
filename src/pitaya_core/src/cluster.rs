@@ -42,7 +42,7 @@ pub enum Error {
     #[error("internal: {0}")]
     Internal(String),
 
-    #[error("invalid server response")]
+    #[error("invalid server response: {0}")]
     InvalidServerResponse(prost::DecodeError),
 
     #[error("rpc server already started")]
@@ -134,26 +134,26 @@ pub enum Notification {
 // Represents an RPC that comes from another server in the cluster.
 #[derive(Debug)]
 pub struct Rpc {
-    req: protos::Request,
-    responder: oneshot::Sender<protos::Response>,
+    req: Vec<u8>,
+    responder: oneshot::Sender<Vec<u8>>,
 }
 
 impl Rpc {
-    pub fn new(req: protos::Request, responder: oneshot::Sender<protos::Response>) -> Self {
+    pub fn new(req: Vec<u8>, responder: oneshot::Sender<Vec<u8>>) -> Self {
         Self { req, responder }
     }
 
-    pub fn request(&self) -> &protos::Request {
+    pub fn request(&self) -> &[u8] {
         &self.req
     }
 
     // Responds to the RPC with the given response. Returns true
     // on success and false if it was not able to answer.
-    pub fn respond(self, res: protos::Response) -> bool {
+    pub fn respond(self, res: Vec<u8>) -> bool {
         self.responder.send(res).map(|_| true).unwrap_or(false)
     }
 
-    pub fn responder(self) -> oneshot::Sender<protos::Response> {
-        self.responder
+    pub fn consume(self) -> (Vec<u8>, oneshot::Sender<Vec<u8>>) {
+        (self.req, self.responder)
     }
 }

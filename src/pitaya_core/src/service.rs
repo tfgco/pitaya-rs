@@ -7,11 +7,12 @@ use crate::{
     session::{self, Session},
     utils, Route,
 };
+use prost::Message;
 use slog::{debug, error, o, warn};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub type RpcHandler = Box<dyn Fn(Context, Option<Session>, cluster::Rpc) + Send + Sync + 'static>;
+pub type RpcHandler = Box<dyn Fn(cluster::Rpc) + Send + Sync + 'static>;
 
 pub enum RpcDispatch {
     Handlers {
@@ -45,9 +46,45 @@ impl Remote {
         }
     }
 
-    pub async fn process_rpc(&self, ctx: Context, rpc: cluster::Rpc) {
+    pub async fn process_rpc(&self, rpc: cluster::Rpc, container: Arc<state::Container>) {
+        if let RpcDispatch::Raw(rpc_handler) = &self.rpc_dispatch {
+            // If we have a raw rpc dispatch, we wan't to send it directly to the raw consumer instead of trying
+            // to process the message. This avoid unnecessary marshalling and unmarshalling of messages
+            // on the Rust side.
+            rpc_handler(rpc);
+            return;
+        }
+
+        let req: protos::Request = match Message::decode(rpc.request()) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(self.logger, "received malformed rpc");
+                if !rpc.respond(utils::build_error_response(
+                    constants::CODE_BAD_FORMAT,
+                    format!("received malformed RPC proto: {}", e),
+                )) {
+                    error!(self.logger, "failed to respond to rpc");
+                }
+                return;
+            }
+        };
+
+        let ctx = match Context::new(&req, container) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                let response = utils::build_error_response(
+                    constants::CODE_BAD_FORMAT,
+                    format!("invalid request: {}", e),
+                );
+                if !rpc.respond(response) {
+                    error!(self.logger, "failed to respond to rpc");
+                }
+                return;
+            }
+        };
+
         let route = {
-            if rpc.request().msg.is_none() {
+            if req.msg.is_none() {
                 warn!(self.logger, "received rpc without message");
                 if !rpc.respond(utils::build_error_response(
                     constants::CODE_BAD_FORMAT,
@@ -58,7 +95,7 @@ impl Remote {
                 return;
             }
 
-            let route_str = rpc.request().msg.as_ref().unwrap().route.to_string();
+            let route_str = req.msg.as_ref().unwrap().route.to_string();
             let maybe_route = Route::try_from_str(route_str.clone());
 
             if maybe_route.is_none() {
@@ -75,9 +112,9 @@ impl Remote {
             maybe_route.unwrap()
         };
 
-        match protos::RpcType::from_i32(rpc.request().r#type) {
-            Some(protos::RpcType::User) => self.process_rpc_user(ctx, rpc, route).await,
-            Some(protos::RpcType::Sys) => self.process_rpc_sys(ctx, rpc, route).await,
+        match protos::RpcType::from_i32(req.r#type) {
+            Some(protos::RpcType::User) => self.process_rpc_user(ctx, rpc, route, &req).await,
+            Some(protos::RpcType::Sys) => self.process_rpc_sys(ctx, rpc, route, &req).await,
             None => {
                 error!(self.logger, "received unknown rpc type");
                 if !rpc.respond(utils::build_error_response(
@@ -90,7 +127,13 @@ impl Remote {
         }
     }
 
-    async fn process_rpc_user(&self, ctx: Context, rpc: cluster::Rpc, route: Route) {
+    async fn process_rpc_user(
+        &self,
+        ctx: Context,
+        rpc: cluster::Rpc,
+        route: Route,
+        req: &protos::Request,
+    ) {
         debug!(self.logger, "processing user rpc");
         // Having the route, we need to find the correct handler and method for it.
         match &self.rpc_dispatch {
@@ -102,19 +145,22 @@ impl Remote {
                     None,
                     rpc,
                     route,
+                    req,
                 )
                 .await;
             }
-            RpcDispatch::Raw(rpc_handler) => {
-                rpc_handler(ctx, None, rpc);
-            }
+            _ => unreachable!("RpcDispatch::Raw already handled"),
         }
     }
 
-    async fn process_rpc_sys(&self, ctx: Context, rpc: cluster::Rpc, route: Route) {
+    async fn process_rpc_sys(
+        &self,
+        ctx: Context,
+        rpc: cluster::Rpc,
+        route: Route,
+        req: &protos::Request,
+    ) {
         debug!(self.logger, "processing sys rpc");
-
-        let req = rpc.request();
 
         // Get session object
         let session = match Session::new(
@@ -158,12 +204,11 @@ impl Remote {
                     Some(session),
                     rpc,
                     route,
+                    req,
                 )
                 .await;
             }
-            RpcDispatch::Raw(rpc_handler) => {
-                rpc_handler(ctx, Some(session), rpc);
-            }
+            _ => unreachable!("RpcDispatch::Raw already handled"),
         }
     }
 
@@ -174,6 +219,7 @@ impl Remote {
         session: Option<Session>,
         rpc: cluster::Rpc,
         route: Route,
+        req: &protos::Request,
     ) {
         let maybe_method = handlers.get(&route);
 
@@ -185,12 +231,9 @@ impl Remote {
             )
         } else {
             let method = maybe_method.unwrap();
-            method(ctx, session, rpc.request()).await
+            let res = method(ctx, session, req).await;
+            utils::encode_proto(&res)
         };
-
-        if response.error.is_some() {
-            warn!(logger, "handler returning error for RPC");
-        }
 
         if !rpc.respond(response) {
             error!(logger, "failed to respond to rpc");
