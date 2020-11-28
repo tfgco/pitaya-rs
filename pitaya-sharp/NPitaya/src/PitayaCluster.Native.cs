@@ -24,7 +24,7 @@ namespace NPitaya
         private delegate void LogFunction(IntPtr context, IntPtr msg);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate void HandleRpcCallbackFunc(IntPtr userData, IntPtr ctx, IntPtr rpc);
+        private delegate void HandleRpcCallbackFunc(IntPtr userData, IntPtr rpc);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void ClusterNotificationCallbackFunc(IntPtr userData, NotificationType notificationType, IntPtr data);
@@ -134,8 +134,6 @@ namespace NPitaya
         private static extern IntPtr pitaya_rpc_respond(IntPtr rpc, IntPtr responseData, Int32 responseLen);
         [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
         private static extern IntPtr pitaya_rpc_drop(IntPtr rpc);
-        [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr pitaya_ctx_drop(IntPtr ctx);
 
         //
         // Kick

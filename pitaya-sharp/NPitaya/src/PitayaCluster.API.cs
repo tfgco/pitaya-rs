@@ -48,7 +48,7 @@ namespace NPitaya
             }
         }
 
-        static ServiceDiscoveryListener _serviceDiscoveryListener;
+        static ServiceDiscoveryListener? _serviceDiscoveryListener;
 
         public static void AddSignalHandler(Action cb)
         {
@@ -77,7 +77,7 @@ namespace NPitaya
             );
         }
 
-        static void HandleRpcCallback(IntPtr userData, IntPtr ctx, IntPtr rpc)
+        static void HandleRpcCallback(IntPtr userData, IntPtr rpc)
         {
             Int32 len;
             IntPtr rawData = pitaya_rpc_request(rpc, out len);
@@ -93,10 +93,6 @@ namespace NPitaya
             catch (Exception e)
             {
                 Logger.Error("Failed to decode request, error:{0}", e.Message);
-            }
-            finally
-            {
-                pitaya_ctx_drop(ctx);
             }
         }
 
