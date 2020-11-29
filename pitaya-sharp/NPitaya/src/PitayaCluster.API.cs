@@ -18,7 +18,8 @@ namespace NPitaya
     // Allows making RPC calls to other Pitaya servers.
     public partial class PitayaCluster
     {
-        private static ISerializer _serializer = new JSONSerializer();
+        const string RPC_LATENCY_METRIC = "rpc_latency";
+        static ISerializer _serializer = new JSONSerializer();
         static ProtobufSerializer _remoteSerializer = new ProtobufSerializer();
         public delegate string RemoteNameFunc(string methodName);
         delegate void OnSignalFunc();
@@ -113,6 +114,13 @@ namespace NPitaya
             var pitayaMetrics = IntPtr.Zero;
             if (metricsConfig.IsEnabled)
             {
+                if (metricsConfig.CustomMetrics == null) {
+                    metricsConfig.CustomMetrics = new CustomMetrics();
+                }
+                metricsConfig.CustomMetrics.AddHistogram(
+                    RPC_LATENCY_METRIC,
+                    new HistogramBuckets(HistogramBucketKind.Exponential, 0.0005, 2.0, 20)
+                );
                 _metricsReporter = new MetricsReporter(metricsConfig);
                 pitayaMetrics = _metricsReporter.GetPitayaPtr();
             }

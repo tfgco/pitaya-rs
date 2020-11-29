@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using NPitaya.Models;
@@ -101,6 +102,7 @@ namespace NPitaya
         static void DispatchRpc(RpcClient rpcClient, IntPtr rpc, Protos.Request req)
         {
             Task.Run(async () => {
+                var start = Stopwatch.StartNew();
                 var res = new Protos.Response();
                 try
                 {
@@ -121,6 +123,8 @@ namespace NPitaya
                 }
                 finally
                 {
+                    start.Stop();
+                    _metricsReporter?.ObserveHistogram(RPC_LATENCY_METRIC, (float)start.Elapsed.TotalSeconds, null);
                     unsafe
                     {
                         byte[] responseData = res.ToByteArray();

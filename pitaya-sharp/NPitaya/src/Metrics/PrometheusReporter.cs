@@ -35,7 +35,7 @@ namespace NPitaya.Metrics
             _namespace = @namespace;
             _host = host;
             _port = int.Parse(port);
-            _server = new MetricServer(hostname: _host, port: _port);
+            _server = new MetricServer(hostname: _host, port: _port, url: "metrics/");
             _counters = new Dictionary<string, Counter>();
             _gauges = new Dictionary<string, Gauge>();
             _histograms = new Dictionary<string, Histogram>();
