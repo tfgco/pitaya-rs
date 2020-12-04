@@ -34,8 +34,8 @@ struct SharedState {
 
 struct ClusterComponents {
     discovery: Arc<Mutex<Box<dyn cluster::Discovery>>>,
-    rpc_server: Arc<Box<dyn cluster::RpcServer>>,
-    rpc_client: Arc<Box<dyn cluster::RpcClient>>,
+    rpc_server: Arc<dyn cluster::RpcServer>,
+    rpc_client: Arc<dyn cluster::RpcClient>,
 }
 
 /// Pitaya represent a pitaya server.
@@ -44,8 +44,8 @@ struct ClusterComponents {
 /// to be discovered and send RPCs to other Pitaya servers.
 pub struct Pitaya {
     discovery: Arc<Mutex<Box<dyn cluster::Discovery>>>,
-    rpc_server: Arc<Box<dyn cluster::RpcServer>>,
-    rpc_client: Arc<Box<dyn cluster::RpcClient>>,
+    rpc_server: Arc<dyn cluster::RpcServer>,
+    rpc_client: Arc<dyn cluster::RpcClient>,
     shared_state: Arc<SharedState>,
     logger: slog::Logger,
     settings: Arc<settings::Settings>,
@@ -598,7 +598,6 @@ impl<'a> PitayaBuilder<'a> {
         let settings =
             settings::Settings::merge(self.base_settings, self.env_prefix, self.config_file)?;
         let etcd_settings = Arc::new(settings.etcd.clone());
-        let nats_settings = Arc::new(settings.nats.clone());
         let server_info = self.server_info.expect("server_info should not be None");
 
         let metrics_reporter: metrics::ThreadSafeReporter = self
@@ -622,19 +621,20 @@ impl<'a> PitayaBuilder<'a> {
         // Freeze state, so we cannot modify it later.
         let container = Arc::new(self.container);
 
-        let rpc_server: Arc<Box<dyn cluster::RpcServer>> = Arc::new(Box::new(NatsRpcServer::new(
+        let rpc_server: Arc<dyn cluster::RpcServer> = Arc::new(NatsRpcServer::new(
             logger.clone(),
             server_info.clone(),
-            nats_settings.clone(),
+            settings.nats.clone(),
             tokio::runtime::Handle::current(),
             metrics_reporter.clone(),
-        )));
-        let rpc_client: Arc<Box<dyn cluster::RpcClient>> = Arc::new(Box::new(NatsRpcClient::new(
+        ));
+        let rpc_client: Arc<dyn cluster::RpcClient> = Arc::new(NatsRpcClient::new(
             logger.clone(),
-            nats_settings,
+            settings.nats.clone(),
             server_info.clone(),
+            tokio::runtime::Handle::current(),
             metrics_reporter.clone(),
-        )));
+        ));
 
         let rpc_dispatch = if let Some(rpc_handler) = self.rpc_handler {
             service::RpcDispatch::Raw(rpc_handler)

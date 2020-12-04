@@ -48,7 +48,7 @@ pub struct Session {
     pub data: HashMap<String, serde_json::Value>,
 
     discovery: Arc<Mutex<Box<dyn Discovery>>>,
-    rpc_client: Arc<Box<dyn RpcClient>>,
+    rpc_client: Arc<dyn RpcClient>,
     logger: slog::Logger,
 }
 
@@ -69,7 +69,7 @@ impl Session {
     pub fn new(
         logger: slog::Logger,
         req: &protos::Request,
-        rpc_client: Arc<Box<dyn RpcClient>>,
+        rpc_client: Arc<dyn RpcClient>,
         discovery: Arc<Mutex<Box<dyn Discovery>>>,
     ) -> Result<Self, Error> {
         if let Some(s) = req.session.as_ref() {

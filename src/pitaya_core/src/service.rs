@@ -27,7 +27,7 @@ pub enum RpcDispatch {
 pub struct Remote {
     logger: slog::Logger,
     discovery: Arc<Mutex<Box<dyn cluster::Discovery>>>,
-    rpc_client: Arc<Box<dyn cluster::RpcClient>>,
+    rpc_client: Arc<dyn cluster::RpcClient>,
     rpc_dispatch: RpcDispatch,
 }
 
@@ -35,7 +35,7 @@ impl Remote {
     pub fn new(
         logger: slog::Logger,
         discovery: Arc<Mutex<Box<dyn cluster::Discovery>>>,
-        rpc_client: Arc<Box<dyn cluster::RpcClient>>,
+        rpc_client: Arc<dyn cluster::RpcClient>,
         rpc_dispatch: RpcDispatch,
     ) -> Self {
         Self {
